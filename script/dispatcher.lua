@@ -71,7 +71,8 @@ function OnTick(event)
 
         script.raise_event(on_delivery_failed_event, {train_id = trainID, shipment = delivery.shipment})
         RemoveDelivery(trainID)
-      elseif tick-delivery.started > delivery_timeout then
+      elseif tick-delivery.started > delivery_timeout-- if 
+		or delivery.mustBeCancelled then
         local from_entity = global.LogisticTrainStops[delivery.from_id] and global.LogisticTrainStops[delivery.from_id].entity
         local to_entity = global.LogisticTrainStops[delivery.to_id] and global.LogisticTrainStops[delivery.to_id].entity
         if message_level >= 1 then
@@ -144,8 +145,7 @@ function OnTick(event)
       return
     end
 
-  elseif global.tick_state == 4 then -- raise API events
-    global.tick_state = 0
+  elseif global.tick_state == 4 then -- raise API events    
     -- raise events for mod API
     script.raise_event(on_stops_updated_event,
       {
@@ -159,7 +159,15 @@ function OnTick(event)
         deliveries = global.Dispatcher.Deliveries,
         available_trains = global.Dispatcher.availableTrains,
       })
-
+	global.tick_state = 5
+  elseif global.tick_state == 5 then -- after api event raised, send train to process request.
+	global.tick_state = 0
+	for _, delivery in pairs(global.Dispatcher.Deliveries) do
+		local train = delivery.train
+		if train.station and train.station.valid and global.LogisticTrainStops[train.station.unit_number].is_depot then -- if train stopped at depo, try to send train to path
+			delivery.train.schedule=delivery.schedule
+		end
+	end
   else -- reset
     global.tick_stop_index = nil
     global.tick_request_index = nil
@@ -623,19 +631,20 @@ function ProcessRequest(reqIndex, request)
   schedule.records[#schedule.records + 1] = NewScheduleRecord(depot.entity.backer_name, "inactivity", depot_inactivity)
 
   -- force train to go to the station we pick by setting a temporary waypoint on the rail that the station is connected to
-  if fromRail then
+  --if fromRail then
     -- wait time 0 is interpreted as waypoint without stopping by Factorio
-    schedule.records[#schedule.records + 1] = NewScheduleRecord(nil, "time", 0, nil, 0, fromRail)
-  end
+  --  schedule.records[#schedule.records + 1] = NewScheduleRecord(nil, "time", 0, nil, 0, fromRail)
+  --end
   schedule.records[#schedule.records + 1] = NewScheduleRecord(from, "item_count", "≥", loadingList)
 
-  if toRail then
-    schedule.records[#schedule.records + 1] = NewScheduleRecord(nil, "time", 0, nil, 0, toRail)
-  end
+  --if toRail then
+  --  schedule.records[#schedule.records + 1] = NewScheduleRecord(nil, "time", 0, nil, 0, toRail)
+  --end
   schedule.records[#schedule.records + 1] = NewScheduleRecord(to, "item_count", "=", loadingList, 0)
 
   -- log("DEBUG: schedule = "..serpent.block(schedule))
-  selectedTrain.schedule = schedule
+  -- train schedule
+  --selectedTrain.schedule = schedule
 
 
   local shipment = {}
@@ -682,7 +691,9 @@ function ProcessRequest(reqIndex, request)
     to_id = toID,
     -- networkID = providerData.network_id,
     network_id = providerData.network_id,
-    shipment = shipment}
+    shipment = shipment,
+	mustBeCancelled = false,
+	schedule=schedule}
   global.Dispatcher.availableTrains_total_capacity = global.Dispatcher.availableTrains_total_capacity - global.Dispatcher.availableTrains[selectedTrain.id].capacity
   global.Dispatcher.availableTrains_total_fluid_capacity = global.Dispatcher.availableTrains_total_fluid_capacity - global.Dispatcher.availableTrains[selectedTrain.id].fluid_capacity
   global.Dispatcher.availableTrains[selectedTrain.id] = nil
@@ -708,5 +719,3 @@ function ProcessRequest(reqIndex, request)
   -- return train ID = delivery ID
   return selectedTrain.id
 end
-
-
